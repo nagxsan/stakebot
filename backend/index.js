@@ -1,15 +1,66 @@
+require("dotenv").config();
 const express = require('express');
 const bodyParser = require('body-parser');
-const { userModel } = require('./models')
+const { z } = require('zod');
+const bcrypt = require('bcrypt');
+
+const userModel = require('./models')
 
 const app = express();
-
 app.use(bodyParser.json());
 
-app.post("/api/v1/signup", (req, res) => {
-    console.log(req.body);
+const signUpBodyObject = z.object({
+    username: z.string(),
+    password: z.string()
+})
+
+const salt = bcrypt.genSaltSync(10);
+
+function validateSignUpInputs(req, res, next) {
+    try {
+        signUpBodyObject.parse(req.body)
+        next()
+    } catch (error) {
+        if (error instanceof z.ZodError) {
+            console.log(error.issues);
+        }
+
+        res.status(400).json({
+            message: "Zod validation failed. Wrong type of data sent for username or password."
+        })
+    }
+}
+
+app.post("/api/v1/signup", validateSignUpInputs, async (req, res) => {
+    const { username, password } = req.body;
+    const existingUser = await userModel.findOne({
+        username: username
+    });
+    if (existingUser) {
+        console.log("User already exists");
+        res.status(400).json({
+            message: "Sign Up failed. User already exists for this username." 
+        })
+        return;
+    }
+
+    const hashedPassword = bcrypt.hashSync(password, salt);
+
+    try {
+        const newUser = await userModel.create({
+            username: username,
+            password: hashedPassword
+        });
+    } catch (error) {
+        console.log(`Error saving user ${username} in database.`)
+        res.status(500).json({
+            message: "Sign up failed. Error saving user in database."
+        })
+        return;
+    }
+    
     res.json({
-        message: `Sign Up`
+        message: "Sign Up successful"
     });
 });
 
