@@ -1,6 +1,6 @@
 const express = require('express');
 const bodyParser = require('body-parser');
-const userModel = require('./models')
+const { userModel } = require('./models')
 
 const app = express();
 
