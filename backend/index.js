@@ -1,35 +1,16 @@
 require("dotenv").config();
 const express = require('express');
 const bodyParser = require('body-parser');
-const { z } = require('zod');
 const bcrypt = require('bcrypt');
+const jwt = require('jsonwebtoken');
 
-const userModel = require('./models')
+const userModel = require('./models');
+const { Keypair } = require("@solana/web3.js");
+
+const { validateSignUpInputs, encrypt, decrypt } = require("./utils/utils");
 
 const app = express();
 app.use(bodyParser.json());
-
-const signUpBodyObject = z.object({
-    username: z.string(),
-    password: z.string()
-})
-
-const salt = bcrypt.genSaltSync(10);
-
-function validateSignUpInputs(req, res, next) {
-    try {
-        signUpBodyObject.parse(req.body)
-        next()
-    } catch (error) {
-        if (error instanceof z.ZodError) {
-            console.log(error.issues);
-        }
-
-        res.status(400).json({
-            message: "Zod validation failed. Wrong type of data sent for username or password."
-        })
-    }
-}
 
 app.post("/api/v1/signup", validateSignUpInputs, async (req, res) => {
     const { username, password } = req.body;
@@ -44,12 +25,18 @@ app.post("/api/v1/signup", validateSignUpInputs, async (req, res) => {
         return;
     }
 
+    const salt = bcrypt.genSaltSync(10);
     const hashedPassword = bcrypt.hashSync(password, salt);
+
+    const keypair = new Keypair();
+    const encryptedPrivateKey = encrypt(keypair.secretKey.toString(), `${username}:${hashedPassword}`);
 
     try {
         const newUser = await userModel.create({
             username: username,
-            password: hashedPassword
+            password: hashedPassword,
+            publicKey: keypair.publicKey.toString(),
+            privateKey: encryptedPrivateKey
         });
     } catch (error) {
         console.log(`Error saving user ${username} in database.`)
@@ -60,14 +47,33 @@ app.post("/api/v1/signup", validateSignUpInputs, async (req, res) => {
     }
     
     res.json({
-        message: "Sign Up successful"
+        message: "Sign Up successful",
+        publickKey: keypair.publicKey.toString()
     });
 });
 
-app.post("/api/v1/signin", (req, res) => {
-    res.json({
-        message: "Sign In"
+app.post("/api/v1/signin", async (req, res) => {
+    const { username, password } = req.body;
+
+    const user = await userModel.findOne({
+        username: username
     });
+
+    if (user && bcrypt.compareSync(password, user.password)) {
+        const jwtToken = jwt.sign({
+            id: user
+        }, process.env.JWT_SECRET);
+        res.json({
+            message: "Sign in successful",
+            jwt: jwtToken
+        });
+        return;
+    } else {
+        res.status(400).json({
+            message: "Incorrect credentials, check username or password and try again."
+        })
+        return;
+    }
 });
 
 app.post("/api/v1/txn/sign", (req, res) => {
