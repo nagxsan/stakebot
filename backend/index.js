@@ -3,6 +3,7 @@ const express = require('express');
 const bodyParser = require('body-parser');
 const bcrypt = require('bcrypt');
 const jwt = require('jsonwebtoken');
+const axios = require('axios');
 
 const userModel = require('./models');
 const { Keypair } = require("@solana/web3.js");
@@ -48,9 +49,30 @@ app.post("/api/v1/signup", validateSignUpInputs, async (req, res) => {
     
     res.json({
         message: "Sign Up successful",
-        publickKey: keypair.publicKey.toString()
+        publicKey: keypair.publicKey.toString()
     });
 });
+
+app.post("/api/v1/wallet", async (req, res) => {
+    const { publicKey } = req.body
+    console.log(publicKey);
+    const response = await axios.post("https://api.devnet.solana.com", {
+        jsonrpc: "2.0",
+        id: 1,
+        method: "getAccountInfo",
+        params: [
+          publicKey,
+          {
+            "encoding": "base58"
+          }
+        ]
+    })
+    console.log(response.data);
+
+    res.json({
+        message: "Wallet details"
+    })
+})
 
 app.post("/api/v1/signin", async (req, res) => {
     const { username, password } = req.body;

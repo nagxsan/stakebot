@@ -13,7 +13,7 @@ bot.on('message', async (msg) => {
     const userId = msg.from.id;
     const messageText = msg.text;
   
-    if (messageText === '/start') {
+    if (messageText === '/start' && (userState[userId] === undefined || userState[userId] === "waiting_for_signup")) {
         bot.sendMessage(chatId, 'Welcome to StakeBot! Please click the following button to add a username.', {
             reply_markup: {
                 inline_keyboard: [
@@ -43,13 +43,45 @@ bot.on('message', async (msg) => {
             })
             bot.sendMessage(chatId, 'Thank you, your password has been set.');
             bot.sendMessage(chatId, `Congratulations! You have successfully signed up! This is your public key: ${response.data.publicKey}`)
+
+            userState[userId] = "signed_up"
+            user['publicKey'] = response.data.publicKey
+
+            bot.sendMessage(chatId, "Choose from these options to proceed next:", {
+                reply_markup: {
+                    inline_keyboard: [
+                        [
+                            { text: 'Stake SOL', callback_data: 'stake_sol' },
+                            { text: 'Withdraw SOL', callback_data: 'withdraw_sol' }
+                        ],
+                        [
+                            { text: 'View wallet', callback_data: 'view_wallet' }
+                        ]
+                    ]
+                }
+            })
         } catch (error) {
             bot.sendMessage(chatId, `${error.response?.data?.message} Please restart the process by sending /start again in the chat.`);
+            userState[userId] = "waiting_for_signup"
         }
+    } else if (userState[userId] === "signed_up" && messageText === "/menu") {
+        bot.sendMessage(chatId, "Please choose from these options to proceed.", {
+            reply_markup: {
+                inline_keyboard: [
+                    [
+                        { text: 'Stake SOL', callback_data: 'stake_sol' },
+                        { text: 'Withdraw SOL', callback_data: 'withdraw_sol' }
+                    ],
+                    [
+                        { text: 'View wallet', callback_data: 'view_wallet' }
+                    ]
+                ]
+            }
+        })
     }
 });
 
-bot.on('callback_query', (callbackQuery) => {
+bot.on('callback_query', async (callbackQuery) => {
     const message = callbackQuery.message;
     const chatId = message.chat.id;
     const userId = callbackQuery.from.id;
@@ -61,6 +93,16 @@ bot.on('callback_query', (callbackQuery) => {
     } else if (callbackQuery.data === 'set_password') {
         responseText = 'Great job selecting a username. Please enter the password you want to set.';
         userState[userId] = "waiting_for_password"
+    } else if (callbackQuery.data === 'stake_sol') {
+        responseText = 'Staking SOL'
+    } else if (callbackQuery.data === 'withdraw_sol') {
+        responseText = 'Withdraw SOL'
+    } else if (callbackQuery.data === 'view_wallet') {
+        const response = await axios.post(`${BASE_URL}/api/v1/wallet`, {
+            publicKey: user['publicKey']
+        })
+        console.log(response.data);
+        responseText = 'View wallet'
     }
 
     bot.editMessageText(`${responseText}`, {
