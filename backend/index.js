@@ -4,11 +4,14 @@ const bodyParser = require('body-parser');
 const bcrypt = require('bcrypt');
 const jwt = require('jsonwebtoken');
 const axios = require('axios');
+const bs58 = require('bs58').default;
 
 const userModel = require('./models');
-const { Keypair } = require("@solana/web3.js");
+const { Keypair, Transaction, Connection } = require("@solana/web3.js");
 
 const { validateSignUpInputs, encrypt, decrypt } = require("./utils/utils");
+
+const connection = new Connection(process.env.ALCHEMY_SOLANA_DEVNET_RPC_ENDPOINT)
 
 const app = express();
 app.use(bodyParser.json());
@@ -30,7 +33,7 @@ app.post("/api/v1/signup", validateSignUpInputs, async (req, res) => {
     const hashedPassword = bcrypt.hashSync(password, salt);
 
     const keypair = new Keypair();
-    const encryptedPrivateKey = encrypt(keypair.secretKey.toString(), `${username}:${hashedPassword}`);
+    const encryptedPrivateKey = encrypt(bs58.encode(keypair.secretKey), `${username}:${hashedPassword}`);
 
     try {
         const newUser = await userModel.create({
@@ -55,8 +58,7 @@ app.post("/api/v1/signup", validateSignUpInputs, async (req, res) => {
 
 app.post("/api/v1/wallet", async (req, res) => {
     const { publicKey } = req.body
-    console.log(publicKey);
-    const response = await axios.post("https://api.devnet.solana.com", {
+    const response = await axios.post(process.env.ALCHEMY_SOLANA_DEVNET_RPC_ENDPOINT, {
         jsonrpc: "2.0",
         id: 1,
         method: "getAccountInfo",
@@ -67,10 +69,10 @@ app.post("/api/v1/wallet", async (req, res) => {
           }
         ]
     })
-    console.log(response.data);
 
     res.json({
-        message: "Wallet details"
+        message: "Wallet details",
+        value: response.data?.result?.value
     })
 })
 
@@ -98,13 +100,43 @@ app.post("/api/v1/signin", async (req, res) => {
     }
 });
 
-app.post("/api/v1/txn/sign", (req, res) => {
+app.post("/api/v1/txn/sign", async (req, res) => {
+    try {
+        const { serializedTx, retry, publicKey } = req.body
+        const tx = Transaction.from(serializedTx.data);
+        const user = await userModel.findOne({
+            publicKey: publicKey
+        })
+
+        if (!user) {
+            res.status(400).json({
+                message: 'User does not exist.'
+            })
+            return
+        }
+
+        const secretKey = decrypt(user.privateKey, `${user.username}:${user.password}`);
+        const keypair = Keypair.fromSecretKey(bs58.decode(secretKey));
+
+        tx.sign(keypair)
+
+        const signature = await connection.sendTransaction(tx, [keypair]);
+
+        console.log(signature);
+    } catch (error) {
+        console.log(error.response?.data || error.message);
+        res.status(500).json({
+            message: 'Error making the transaction'
+        })
+        return
+    }
+
     res.json({
         message: "Sign Txn"
     });
 });
 
-app.get("/api/v1/txn/", (req, res) => {
+app.get("/api/v1/txn", (req, res) => {
     res.json({
         message: "Txn id"
     });

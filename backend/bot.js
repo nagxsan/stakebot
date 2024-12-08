@@ -1,12 +1,15 @@
 require("dotenv").config();
 const TelegramBot = require('node-telegram-bot-api');
 const axios = require('axios');
+const { LAMPORTS_PER_SOL, Transaction, SystemProgram, PublicKey, Connection } = require("@solana/web3.js");
 
 const bot = new TelegramBot(process.env.TELEGRAM_BOT_TOKEN, { polling: true });
 
 const userState = {}
 const user = {}
 const BASE_URL = process.env.BASE_URL
+
+const connection = new Connection(process.env.ALCHEMY_SOLANA_DEVNET_RPC_ENDPOINT)
 
 bot.on('message', async (msg) => {
     const chatId = msg.chat.id;
@@ -47,11 +50,14 @@ bot.on('message', async (msg) => {
             userState[userId] = "signed_up"
             user['publicKey'] = response.data.publicKey
 
-            bot.sendMessage(chatId, "Choose from these options to proceed next:", {
+            bot.sendMessage(chatId, "Choose from these options to proceed next. Enter /menu so view the options again.", {
                 reply_markup: {
                     inline_keyboard: [
                         [
                             { text: 'Stake SOL', callback_data: 'stake_sol' },
+                            { text: 'Trade LST', callback_data: 'trade_lst' }
+                        ],
+                        [
                             { text: 'Withdraw SOL', callback_data: 'withdraw_sol' }
                         ],
                         [
@@ -70,6 +76,9 @@ bot.on('message', async (msg) => {
                 inline_keyboard: [
                     [
                         { text: 'Stake SOL', callback_data: 'stake_sol' },
+                        { text: 'Trade LST', callback_data: 'trade_lst' }
+                    ],
+                    [
                         { text: 'Withdraw SOL', callback_data: 'withdraw_sol' }
                     ],
                     [
@@ -78,6 +87,41 @@ bot.on('message', async (msg) => {
                 ]
             }
         })
+    } else if (userState[userId] === "waiting_for_withdraw_sol") {
+        const withdrawSOLResponse = messageText.split(',').map((val) => val.trim())
+        const sol = Number(withdrawSOLResponse[0])
+        const address = withdrawSOLResponse[1]
+
+        if (isNaN(sol)) {
+            bot.sendMessage(chatId, 'Incorrect format/value of SOL entered, please try entering the values again in the format SOL_to_withdraw, address_to_withdraw_to. For example: 0.1,<address> would mean you want to withdraw 0.1 SOL from your current account associated with StakeBot into the account at address <address>.')
+        }
+
+        try {
+            const tx = new Transaction()
+
+            tx.add(SystemProgram.transfer({
+                fromPubkey: new PublicKey(user['publicKey']),
+                toPubkey: new PublicKey(address),
+                lamports: sol * LAMPORTS_PER_SOL
+            }))
+
+            tx.recentBlockhash = (await connection.getLatestBlockhash()).blockhash;
+            tx.feePayer = new PublicKey(user['publicKey'])
+
+            const serializedTx = tx.serialize({
+                requireAllSignatures: false,
+                verifySignatures: false
+            });
+
+            const response = await axios.post(`${BASE_URL}/api/v1/txn/sign`, {
+                serializedTx: serializedTx,
+                retry: false,
+                publicKey: user['publicKey']
+            });
+            console.log(response.data);
+        } catch (error) {
+            bot.sendMessage(chatId, 'Error withdrawing SOL. Please try entering the values again in the format SOL_to_withdraw, address_to_withdraw_to. For example: 0.1,<address> would mean you want to withdraw 0.1 SOL from your current account associated with StakeBot into the account at address <address>.')
+        }
     }
 });
 
@@ -96,13 +140,20 @@ bot.on('callback_query', async (callbackQuery) => {
     } else if (callbackQuery.data === 'stake_sol') {
         responseText = 'Staking SOL'
     } else if (callbackQuery.data === 'withdraw_sol') {
-        responseText = 'Withdraw SOL'
+        responseText = 'Enter comma-separated reply in the format SOL_to_withdraw, address_to_withdraw_to. For example: 0.1,<address> would mean you want to withdraw 0.1 SOL from your current account associated with StakeBot into the account at address <address>.'
+        userState[userId] = "waiting_for_withdraw_sol"
     } else if (callbackQuery.data === 'view_wallet') {
         const response = await axios.post(`${BASE_URL}/api/v1/wallet`, {
             publicKey: user['publicKey']
         })
-        console.log(response.data);
-        responseText = 'View wallet'
+
+        const accountInfo = response.data.value
+        
+        if (accountInfo) {
+            responseText = `Your wallet holds ${accountInfo.lamports / LAMPORTS_PER_SOL} SOL.`
+        } else {
+            responseText = `Please deposit some SOL into your wallet at ${user['publicKey']} to see details.`
+        }
     }
 
     bot.editMessageText(`${responseText}`, {
